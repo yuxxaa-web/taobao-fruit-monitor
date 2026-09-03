@@ -1,0 +1,11 @@
+# 登录态是敏感凭证，绝不入库
+browser-state.json
+*.state.json
+
+# 运行时数据
+.data/
+node_modules/
+
+# 系统/编辑器
+.DS_Store
+*.log

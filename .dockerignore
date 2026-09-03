@@ -1,0 +1,7 @@
+browser-state.json
+*.state.json
+.data/
+node_modules/
+.git/
+.gitignore
+README.md
