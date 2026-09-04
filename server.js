@@ -117,9 +117,17 @@ const TICK_TIMEOUT = 240000; // 4 分钟硬超时：防止 collect() 挂起使 r
 async function tick() {
   if (running) return;
   running = true;
+  let r = null; // 提到 try 外：否则块外 emailNotify(r) 访问的是 undefined -> 自动发信全部静默失败
   const guard = new Promise((_, rej) => setTimeout(() => rej(new Error('TICK_TIMEOUT')), TICK_TIMEOUT));
   try {
-    const r = await Promise.race([collect(), guard]);
+    r = await Promise.race([collect(), guard]); // 成功/业务失败都返回对象，此处不抛
+  } catch (e) {
+    r = { ok: false, reason: 'SCRIPT_ERROR', message: e.message }; // 超时或意外异常 -> 紧急邮件
+    console.error('[ERROR]', e.message);
+  } finally {
+    running = false;
+  }
+  if (r) {
     if (r.ok) {
       writeFile('latest.json', JSON.stringify(r.cur, null, 2));
       appendLog(JSON.stringify(r.entry));
@@ -139,14 +147,8 @@ async function tick() {
       console.log('[WARN] ' + r.reason + ': ' + r.message);
       lastStatus = { ok: false, reason: r.reason, message: r.message };
     }
-  } catch (e) {
-    console.error('[ERROR]', e.message);
-    writeFile('SESSION_STATUS.json', JSON.stringify({ ok: false, reason: 'SCRIPT_ERROR', message: e.message, lastTry: new Date().toISOString() }));
-    lastStatus = { ok: false, reason: 'SCRIPT_ERROR', message: e.message };
-  } finally {
-    running = false;
   }
-  // 发信（无论 ok 与否；内部已去重 + 异常隔离）
+  // 发信（无论 ok 与否；内部已去重 + 异常隔离）。r 在外层作用域，可正确访问
   try { await emailNotify(r); } catch (e) { console.error('[mail] outer err', e.message); }
 }
 
