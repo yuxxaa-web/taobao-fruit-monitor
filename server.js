@@ -1,5 +1,5 @@
 // 自包含 HTTP 服务：固定间隔采集 -> 结果写入容器本地文件 + 驻留内存 -> 通过 HTTP 端点对外暴露
-// 同时内置邮件播报：价格涨跌提醒 / 半小時汇总 / 登录态失效紧急（经 SMTP 直发，不依赖 WorkBuddy）
+// 同时内置通知播报：价格涨跌提醒 / 半小時汇总 / 登录态失效紧急（主通道 PushPlus 微信推送，SMTP 邮件可选）
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -23,7 +23,9 @@ let lastRun = null;
 let lastStatus = null;
 let lastAlert = null;
 
-// ---------------- 邮件播报（SMTP 直发） ----------------
+// ---------------- 通知通道 ----------------
+// 主通道：PushPlus 微信推送（HTTP，无需 SMTP）；备通道：SMTP 邮件（可选，配置 SMTP_PASS 才发）
+const PUSHPLUS_TOKEN = process.env.PUSHPLUS_TOKEN || '';
 const SMTP = {
   host: process.env.SMTP_HOST || 'smtp.qq.com',
   port: parseInt(process.env.SMTP_PORT || '465', 10),
@@ -38,19 +40,43 @@ if (SMTP.pass) {
   transporter = nodemailer.createTransport({ host: SMTP.host, port: SMTP.port, secure: SMTP.secure, auth: { user: SMTP.user, pass: SMTP.pass } });
   console.log('[mail] SMTP transporter ready -> ' + SMTP.to);
 } else {
-  console.log('[mail] 未配置 SMTP_PASS，跳过发信（仅采集）');
+  console.log('[mail] 未配置 SMTP_PASS，仅用 PushPlus 通道');
 }
+if (PUSHPLUS_TOKEN) console.log('[pushplus] token 已配置，作为主通知通道');
+else console.log('[pushplus] 未配置 PUSHPLUS_TOKEN，通知将不可用（请设置环境变量）');
 
-async function sendEmail(subject, text) {
-  if (!transporter) return false;
+// PushPlus 微信推送：https://www.pushplus.plus/  content 支持 markdown 模板
+async function pushPlus(title, contentMd) {
+  if (!PUSHPLUS_TOKEN) return false;
   try {
-    await transporter.sendMail({ from: SMTP.user, to: SMTP.to, subject, text });
-    console.log('[mail] sent: ' + subject);
-    return true;
+    const res = await fetch('https://www.pushplus.plus/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: PUSHPLUS_TOKEN, title, content: contentMd, template: 'markdown' })
+    });
+    const j = await res.json().catch(() => null);
+    console.log('[pushplus] ' + (j ? JSON.stringify(j) : ('HTTP ' + res.status)));
+    return !!(j && j.code === 200);
   } catch (e) {
-    console.error('[mail] send fail: ' + subject + ' :: ' + e.message);
+    console.error('[pushplus] error: ' + e.message);
     return false;
   }
+}
+
+// 统一出口：优先 PushPlus；若 PushPlus 未配置或失败且 SMTP 可用，回退邮件
+async function sendEmail(subject, text) {
+  let ok = false;
+  if (PUSHPLUS_TOKEN) ok = await pushPlus(subject, text);
+  if (!ok && transporter) {
+    try {
+      await transporter.sendMail({ from: SMTP.user, to: SMTP.to, subject, text });
+      console.log('[mail] sent(fallback): ' + subject);
+      ok = true;
+    } catch (e) {
+      console.error('[mail] send fail: ' + subject + ' :: ' + e.message);
+    }
+  }
+  return ok;
 }
 
 // 内存去重：容器重启后清零（罕见，可接受）
@@ -58,7 +84,7 @@ let lastSummaryTs = 0;
 let lastPriceSig = null;
 let lastEmrgSig = null;
 async function emailNotify(r) {
-  if (!transporter) return;
+  if (!transporter && !PUSHPLUS_TOKEN) return;
   if (!r) r = { ok: false, reason: 'SCRIPT_ERROR', message: 'collect returned null' };
   const nowMs = Date.now();
   try {
@@ -174,9 +200,10 @@ const server = http.createServer((req, res) => {
     }
     if (u === '/test-email' && req.method === 'POST') {
       (async () => {
+        const channel = PUSHPLUS_TOKEN ? 'pushplus' : (transporter ? 'smtp' : 'none');
         const ok = await sendEmail('【TBSG-JK】YDFXTDCS',
-          '这是一封来自云端 CloudRun 容器的 SMTP 测试邮件。\n若你收到，说明容器发信通道已打通。\n\n当前状态: ' + JSON.stringify(lastStatus || {}) + '\n时间(BJ): ' + bjNow());
-        return send(ok ? 200 : 500, { mailSent: ok, hasTransporter: !!transporter });
+          '这是一条来自云端容器的 **PushPlus 通知测试**。\n若你收到，说明通知通道已打通。\n\n当前状态: ' + JSON.stringify(lastStatus || {}) + '\n时间(BJ): ' + bjNow());
+        return send(ok ? 200 : 500, { sent: ok, channel, hasPushplus: !!PUSHPLUS_TOKEN, hasTransporter: !!transporter });
       })();
       return;
     }
