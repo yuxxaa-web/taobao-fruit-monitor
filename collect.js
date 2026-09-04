@@ -14,6 +14,11 @@ const urlFor = kw => 'https://h5.ele.me/minisearch/result?keyword=' + encodeURIC
 // 跨 tick 的上一帧快照（进程内存，重启后丢失 → 下一帧当作基线）
 let prevSnap = null;
 
+function beijingNow() {
+  const d = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  return d.toISOString().replace('T', ' ').slice(0, 19);
+}
+
 function buildSnapshot(captures) {
   const shops = new Map();
   captures.forEach(txt => {
@@ -103,11 +108,11 @@ async function collect() {
   const d = diff(prev, cur);
   prevSnap = cur; // 更新内存基线，供下次比价
 
-  const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const now = beijingNow();
   const entry = { time: now, total: cur.length, inRange: inRange.length, shops: cur };
 
   const fmtDist = x => x >= 1000 ? (x / 1000).toFixed(2) + 'km' : x + 'm';
-  let md = `# 监控快照 ${now}\n\n`;
+  let md = `# JKKB ${now}\n\n`;
   md += `- 总计店铺：${cur.length} 家（3km 内 ${inRange.length} 家）\n`;
   if (prev) {
     md += `## 较上次变动\n`;

@@ -13,6 +13,11 @@ const STATE_URL = process.env.STATE_URL || ''; // 可选：启动时从 URL 拉�
 const DATA_DIR = process.env.DATA_DIR || '/app/.data';
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// 北京时间（UTC+8）格式化，统一对外展示，避免容器 UTC 时间造成困惑
+function bjNow() {
+  return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
+}
+
 let running = false;
 let lastRun = null;
 let lastStatus = null;
@@ -54,14 +59,15 @@ let lastPriceSig = null;
 let lastEmrgSig = null;
 async function emailNotify(r) {
   if (!transporter) return;
+  if (!r) r = { ok: false, reason: 'SCRIPT_ERROR', message: 'collect returned null' };
   const nowMs = Date.now();
   try {
     if (r.ok === false) {
       const sig = 'E:' + r.reason;
       if (sig !== lastEmrgSig) {
-        await sendEmail('【淘宝闪购监控】云端登录态失效，需重新登录',
+        await sendEmail('【TBSG-JK】YDDTSX，需重新登录',
           '云端采集失败，原因=' + r.reason + (r.message ? '\n详情: ' + r.message : '') +
-          '\n\n请在本地用 WorkBuddy 重新登录淘宝闪购，并把新的 browser-state.json 重新烘焙进 CloudRun 镜像后部署（GitHub 版则更新 BROWSER_STATE_B64 环境变量）。');
+          '\n\n请在本地用 WorkBuddy 重新登录 TBSG，并把新的 browser-state.json 重新烘焙进 CloudRun 镜像后部署（GitHub 版则更新 BROWSER_STATE_B64 环境变量）。');
         lastEmrgSig = sig;
       }
       return;
@@ -71,7 +77,7 @@ async function emailNotify(r) {
     if (r.hadPrev && r.d && (r.d.priceUp.length || r.d.priceDown.length)) {
       const sig = 'P:' + JSON.stringify({ u: r.d.priceUp, d: r.d.priceDown });
       if (sig !== lastPriceSig) {
-        await sendEmail('【淘宝闪购监控】花屿观澜里水果价格变动', r.md);
+        await sendEmail('【TBSG-JK】HYGLL·SGJGBD', r.md);
         lastPriceSig = sig;
       }
     } else {
@@ -79,7 +85,7 @@ async function emailNotify(r) {
     }
     // 半小時汇总（每 ~30 分钟一封，无论有无变动）
     if (nowMs - lastSummaryTs >= 29 * 60 * 1000) {
-      await sendEmail('【淘宝闪购监控】花屿观澜里·半小時水果汇总（' + r.now + '）', r.md);
+      await sendEmail('【TBSG-JK】HYGLL·BXSSGHZ（' + r.now + '）', r.md);
       lastSummaryTs = nowMs;
     }
   } catch (e) {
@@ -134,7 +140,7 @@ async function tick() {
       writeFile('monitor_latest.md', r.md);
       const ch = r.d && (r.d.priceUp.length || r.d.priceDown.length || r.d.newShops.length || r.d.removedShops.length || r.d.newFruits.length);
       if (r.hadPrev && ch) {
-        const alertMd = `# ⚠️ 水果价格变动提醒 （${r.now}）\n\n${r.md}`;
+        const alertMd = `# ⚠️ SGJGBD TX （${r.now}）\n\n${r.md}`;
         writeFile('ALERT.md', alertMd);
         lastAlert = { time: r.now, md: alertMd, d: r.d };
       }
@@ -143,7 +149,7 @@ async function tick() {
       lastRun = r.now;
       lastStatus = { ok: true, lastSuccess: r.now };
     } else {
-      writeFile('SESSION_STATUS.json', JSON.stringify({ ok: false, reason: r.reason, message: r.message, lastTry: new Date().toISOString() }));
+      writeFile('SESSION_STATUS.json', JSON.stringify({ ok: false, reason: r.reason, message: r.message, lastTry: bjNow() + ' (BJ)' }));
       console.log('[WARN] ' + r.reason + ': ' + r.message);
       lastStatus = { ok: false, reason: r.reason, message: r.message };
     }
@@ -168,8 +174,8 @@ const server = http.createServer((req, res) => {
     }
     if (u === '/test-email' && req.method === 'POST') {
       (async () => {
-        const ok = await sendEmail('【淘宝闪购监控】云端发信通道测试',
-          '这是一封来自云端 CloudRun 容器的 SMTP 测试邮件。\n若你收到，说明容器发信通道已打通。\n\n当前状态: ' + JSON.stringify(lastStatus || {}) + '\n时间: ' + new Date().toISOString());
+        const ok = await sendEmail('【TBSG-JK】YDFXTDCS',
+          '这是一封来自云端 CloudRun 容器的 SMTP 测试邮件。\n若你收到，说明容器发信通道已打通。\n\n当前状态: ' + JSON.stringify(lastStatus || {}) + '\n时间(BJ): ' + bjNow());
         return send(ok ? 200 : 500, { mailSent: ok, hasTransporter: !!transporter });
       })();
       return;
