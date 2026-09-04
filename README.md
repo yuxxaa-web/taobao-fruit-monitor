@@ -5,7 +5,7 @@
 - 每 10 分钟用 headless Chromium 抓取饿了么/淘宝闪购接口，提取附近水果店与水果价格；
 - 跨轮比价，检测**涨价 / 降价 / 新店上架 / 下架**；
 - 结果通过 HTTP 端点暴露（`/report.md`、`/latest.json`、`/status`、`/alert`）；
-- 播报层（WorkBuddy 自动化）读取端点并邮件推送至个人邮箱。
+- 邮件播报由**容器自身经 SMTP 直发**（价格涨跌即时提醒 + 每 30 分钟汇总 + 登录态失效紧急），不依赖 WorkBuddy 在线，完全 7×24 自治。
 
 > 本仓库是「GitHub 版」源码。**登录态（淘宝会话 Cookie）绝不入库**，运行时经环境变量注入。
 
@@ -23,10 +23,10 @@ CloudBase 云托管 (CloudRun)  ──自动构建 Dockerfile──▶  常驻�
         │                                        headless Chromium 抓淘宝
         │                                               │
         ▼                                               ▼
-  播报自动化 (WorkBuddy)  ◀── WebFetch /report.md,/status,/alert ──  结果写 /app/.data
+  容器自身经 SMTP 直发邮件  ──▶  个人邮箱 (1478363@qq.com)        结果写 /app/.data
 ```
 
-容器自包含：登录态在启动时注入后即可运行，**运行时零外部依赖**（不依赖对象存储、不需要 CDN 拉取）。
+容器自包含：登录态在启动时注入后即可运行，**运行时零外部依赖**（不依赖对象存储、不需要 CDN 拉取，邮件也由容器内 nodemailer 直发）。
 
 ---
 
@@ -36,8 +36,8 @@ CloudBase 云托管 (CloudRun)  ──自动构建 Dockerfile──▶  常驻�
 Dockerfile          基于 playwright 镜像，构建参数可注入登录态
 entrypoint.sh       启动时把 BROWSER_STATE_B64 解码为 /tmp/browser-state.json 后启动服务
 collect.js          采集 + 比价逻辑（复用 mtop 接口捕获）
-server.js           HTTP 服务：定时采集 + 暴露结果端点
-package.json        仅依赖 playwright
+server.js           HTTP 服务：定时采集 + 暴露结果端点 + 经 SMTP 直发邮件
+package.json        依赖 playwright（采集）+ nodemailer（发信）
 .gitignore          忽略 browser-state.json / .data / node_modules
 ```
 
@@ -52,6 +52,12 @@ package.json        仅依赖 playwright
 | `STATE_PATH` | `/app/browser-state.json` | 登录态文件路径（一般由 entrypoint 自动设置） |
 | `BROWSER_STATE_B64` | 空 | **登录态 base64**（推荐注入方式，见下） |
 | `STATE_URL` | 空 | 可选：启动时从此 URL 拉取最新登录态覆盖（不推荐，作为兜底） |
+| `SMTP_HOST` | `smtp.qq.com` | SMTP 服务器（QQ 邮箱） |
+| `SMTP_PORT` | `465` | SMTP 端口（SSL） |
+| `SMTP_SECURE` | `true` | 是否 SSL（设为 `false` 则走 STARTTLS） |
+| `SMTP_USER` | `1478363@qq.com` | 发件人邮箱（也是登录账号） |
+| `SMTP_PASS` | 空 | **QQ 邮箱 SMTP 授权码**（不是登录密码），必填 |
+| `TO_EMAIL` | 同 `SMTP_USER` | 收件人邮箱 |
 
 ---
 
@@ -88,6 +94,9 @@ package.json        仅依赖 playwright
 4. 在「环境变量 / 构建参数」中设置：
    - `BROWSER_STATE_B64` = 上述 base64（**方式 A**）；
    - `INTERVAL_MIN` = `10`；
+   - `SMTP_USER` = `1478363@qq.com`；
+   - `SMTP_PASS` = `<QQ 邮箱 SMTP 授权码>`（必填，邮件才能发出）；
+   - `TO_EMAIL` = `1478363@qq.com`；
    - `PORT` = `8080`、`NODE_ENV` = `production`；
 5. 保存并部署。之后 **`git push` 到 main 即自动重新构建并部署**，无需手动上传。
 
@@ -97,7 +106,7 @@ package.json        仅依赖 playwright
 
 ## 登录态过期怎么办
 
-淘宝登录态通常几天~几周失效。失效后 `/status` 返回 `ok:false, reason:SESSION_EXPIRED`，播报层会发「需重新登录」邮件提醒你。
+淘宝登录态通常几天~几周失效。失效后 `/status` 返回 `ok:false, reason:SESSION_EXPIRED`，**容器自身**会经 SMTP 发「需重新登录」紧急邮件提醒你（无需 WorkBuddy 在线）。
 
 更新步骤：
 1. 本地用 WorkBuddy / 浏览器重新登录淘宝闪购，导出新的 `browser-state.json`；

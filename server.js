@@ -1,4 +1,5 @@
 // 自包含 HTTP 服务：固定间隔采集 -> 结果写入容器本地文件 + 驻留内存 -> 通过 HTTP 端点对外暴露
+// 同时内置邮件播报：价格涨跌提醒 / 半小時汇总 / 登录态失效紧急（经 SMTP 直发，不依赖 WorkBuddy）
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -16,6 +17,75 @@ let running = false;
 let lastRun = null;
 let lastStatus = null;
 let lastAlert = null;
+
+// ---------------- 邮件播报（SMTP 直发） ----------------
+const SMTP = {
+  host: process.env.SMTP_HOST || 'smtp.qq.com',
+  port: parseInt(process.env.SMTP_PORT || '465', 10),
+  secure: process.env.SMTP_SECURE !== 'false',
+  user: process.env.SMTP_USER || '1478363@qq.com',
+  pass: process.env.SMTP_PASS || '',
+  to: process.env.TO_EMAIL || process.env.SMTP_USER || '1478363@qq.com'
+};
+let transporter = null;
+if (SMTP.pass) {
+  const nodemailer = require('nodemailer');
+  transporter = nodemailer.createTransport({ host: SMTP.host, port: SMTP.port, secure: SMTP.secure, auth: { user: SMTP.user, pass: SMTP.pass } });
+  console.log('[mail] SMTP transporter ready -> ' + SMTP.to);
+} else {
+  console.log('[mail] 未配置 SMTP_PASS，跳过发信（仅采集）');
+}
+
+async function sendEmail(subject, text) {
+  if (!transporter) return false;
+  try {
+    await transporter.sendMail({ from: SMTP.user, to: SMTP.to, subject, text });
+    console.log('[mail] sent: ' + subject);
+    return true;
+  } catch (e) {
+    console.error('[mail] send fail: ' + subject + ' :: ' + e.message);
+    return false;
+  }
+}
+
+// 内存去重：容器重启后清零（罕见，可接受）
+let lastSummaryTs = 0;
+let lastPriceSig = null;
+let lastEmrgSig = null;
+async function emailNotify(r) {
+  if (!transporter) return;
+  const nowMs = Date.now();
+  try {
+    if (r.ok === false) {
+      const sig = 'E:' + r.reason;
+      if (sig !== lastEmrgSig) {
+        await sendEmail('【淘宝闪购监控】云端登录态失效，需重新登录',
+          '云端采集失败，原因=' + r.reason + (r.message ? '\n详情: ' + r.message : '') +
+          '\n\n请在本地用 WorkBuddy 重新登录淘宝闪购，并把新的 browser-state.json 重新烘焙进 CloudRun 镜像后部署（GitHub 版则更新 BROWSER_STATE_B64 环境变量）。');
+        lastEmrgSig = sig;
+      }
+      return;
+    }
+    lastEmrgSig = null; // 恢复后清零，下次失效再发
+    // 价格涨跌提醒（真实价格变动才发，避免店铺排名波动刷屏）
+    if (r.hadPrev && r.d && (r.d.priceUp.length || r.d.priceDown.length)) {
+      const sig = 'P:' + JSON.stringify({ u: r.d.priceUp, d: r.d.priceDown });
+      if (sig !== lastPriceSig) {
+        await sendEmail('【淘宝闪购监控】花屿观澜里水果价格变动', r.md);
+        lastPriceSig = sig;
+      }
+    } else {
+      lastPriceSig = null; // 价格无变动清零，下次有涨跌必发
+    }
+    // 半小時汇总（每 ~30 分钟一封，无论有无变动）
+    if (nowMs - lastSummaryTs >= 29 * 60 * 1000) {
+      await sendEmail('【淘宝闪购监控】花屿观澜里·半小時水果汇总（' + r.now + '）', r.md);
+      lastSummaryTs = nowMs;
+    }
+  } catch (e) {
+    console.error('[mail] notify err: ' + e.message);
+  }
+}
 
 function writeFile(name, content) {
   try { fs.writeFileSync(path.join(DATA_DIR, name), content, 'utf8'); } catch (e) { console.error('[write fail]', name, e.message); }
@@ -43,11 +113,13 @@ async function bootstrapState() {
   }
 }
 
+const TICK_TIMEOUT = 240000; // 4 分钟硬超时：防止 collect() 挂起使 running 永久为 true、调度卡死
 async function tick() {
   if (running) return;
   running = true;
+  const guard = new Promise((_, rej) => setTimeout(() => rej(new Error('TICK_TIMEOUT')), TICK_TIMEOUT));
   try {
-    const r = await collect();
+    const r = await Promise.race([collect(), guard]);
     if (r.ok) {
       writeFile('latest.json', JSON.stringify(r.cur, null, 2));
       appendLog(JSON.stringify(r.entry));
@@ -74,6 +146,8 @@ async function tick() {
   } finally {
     running = false;
   }
+  // 发信（无论 ok 与否；内部已去重 + 异常隔离）
+  try { await emailNotify(r); } catch (e) { console.error('[mail] outer err', e.message); }
 }
 
 const server = http.createServer((req, res) => {
@@ -88,6 +162,14 @@ const server = http.createServer((req, res) => {
     if (u === '/report.md') return sendText(200, fs.readFileSync(path.join(DATA_DIR, 'monitor_latest.md'), 'utf8'), 'text/markdown');
     if (u === '/collect' && req.method === 'POST') {
       tick().then(() => send(200, { triggered: true, lastRun, status: lastStatus })).catch(e => send(500, { error: e.message }));
+      return;
+    }
+    if (u === '/test-email' && req.method === 'POST') {
+      (async () => {
+        const ok = await sendEmail('【淘宝闪购监控】云端发信通道测试',
+          '这是一封来自云端 CloudRun 容器的 SMTP 测试邮件。\n若你收到，说明容器发信通道已打通。\n\n当前状态: ' + JSON.stringify(lastStatus || {}) + '\n时间: ' + new Date().toISOString());
+        return send(ok ? 200 : 500, { mailSent: ok, hasTransporter: !!transporter });
+      })();
       return;
     }
     send(200, { service: 'taobao-fruit-monitor', lastRun, status: lastStatus, running });
