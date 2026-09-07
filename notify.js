@@ -81,7 +81,7 @@ function decideNotify(r) {
       msgs.push({
         title: '【TBSG-JK】YDDTSX，需重新登录',
         body: '采集失败，原因=' + r.reason + (r.message ? '\n详情: ' + r.message : '') +
-          '\n\n请重新登录 TBSG，把新的 browser-state.json 重新生成 base64，更新 GitHub 仓库 Secrets 中的 BROWSER_STATE_B64 后重新运行。'
+          '\n\n请重新登录 TBSG，把新的 browser-state.json 覆盖到 runner 机器的 tbmon-state 目录（Windows: C:/Users/<你的用户名>/tbmon-state/browser-state.json；Linux/macOS: ~/tbmon-state/browser-state.json）后重新运行。'
       });
       s.lastEmrgSig = sig;
     }
