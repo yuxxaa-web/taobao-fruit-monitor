@@ -128,6 +128,36 @@ curl http://localhost:8080/report.md
 
 ---
 
-## 与现有 CloudRun 版的关系
+## GitHub Actions 完全部署（推荐：脱离 CloudBase，零资源消耗）
+
+把监控**完全跑在 GitHub 上**：由 GitHub Actions 定时触发、在你自己的国内机器上执行，结果经 PushPlus 推送到微信。彻底绕开 CloudBase 资源包限制；且私有仓库在 **self-hosted runner** 上运行不计 Actions 额度。
+
+### 为什么必须用 self-hosted runner
+淘宝/饿了么接口依赖**中国大陆 IP**（定位、登录态绑定、反爬风控）。GitHub 官方托管 runner 在海外，直接跑会抓不到正确数据。**self-hosted runner** = 在你的一台国内常开机器（Windows / Linux 均可，装 Node 20 + Git）上注册，Actions 触发后就在那台机器本地用 Chromium 抓数据，IP 正确、网络正常。
+
+### 步骤
+1. **配置 Secrets**（仓库 → Settings → Secrets and variables → Actions → New repository secret）：
+   - `BROWSER_STATE_B64`：淘宝登录态 `browser-state.json` 的 base64（生成见下）；
+   - `PUSHPLUS_TOKEN`：PushPlus token（关注「PushPlus 推送加」公众号 → 登录 pushplus.plus → 复制 token）。
+2. **注册 self-hosted runner**（仓库 → Settings → Actions → Runners → New self-hosted runner）：
+   - 按页面指引下载 runner 并解压到你的国内机器；
+   - 运行 `./config.sh --url https://github.com/yuxxaa-web/taobao-fruit-monitor --token <页面给的 TOKEN>`；
+   - 运行 `./run.sh` 常驻（可注册为系统服务以便开机自启）；
+   - 确保该机器已装 **Node.js 20** 与 **Git**。
+3. **触发**：`git push` 到 main，或在 Actions 页面手动 Run workflow。之后每 10 分钟自动跑一次。
+
+### 登录态 base64 生成
+- Windows (PowerShell)：`[Convert]::ToBase64String([IO.File]::ReadAllBytes("browser-state.json"))`
+- macOS / Linux：`base64 -i browser-state.json`
+
+### 注意事项
+- 调度频率：`cron: '*/10 * * * *'`（UTC）。GitHub 对 scheduled workflow 可能延迟几分钟，属正常。
+- 状态持久化：上一轮快照与去重标记存在 runner 的 `runner.tool_cache/taobao-monitor-state`，**同机器跨 run 保留**；所以价格涨跌对比、半小時汇总去重都能正确工作（这也是为什么不能用每次全新 VM 的托管 runner）。
+- 登录态过期：淘宝登录态通常几天~数周失效。失效后 PushPlus 推送「【TBSG-JK】YDDTSX，需重新登录」，重新生成 `BROWSER_STATE_B64` 并更新 Secret 即可。
+- PushPlus 免费版有每日条数上限，频繁价格变动可能触顶；必要时降低推送频率或升级 PushPlus 付费档。
+
+---
+
+## （可选旧方案）与 CloudRun 版的关系
 
 当前已有一个从本地上传部署、正常运行的 CloudRun 服务（同 env `yuxxaa-d8gs9k0373fd8f5f5`）。本仓库是它的**源码化 / GitHub 化版本**：代码一致，区别仅在于登录态改为经环境变量注入。迁移到 GitHub 自动部署后，可将原本地上传版停用，统一由 `git push` 管理。

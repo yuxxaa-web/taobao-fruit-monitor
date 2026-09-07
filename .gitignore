@@ -4,6 +4,7 @@ browser-state.json
 
 # 运行时数据
 .data/
+state/
 node_modules/
 
 # 系统/编辑器

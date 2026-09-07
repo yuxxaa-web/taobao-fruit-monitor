@@ -1,0 +1,47 @@
+name: 淘宝水果监控 (PushPlus)
+
+# 完全运行在 GitHub 上：定时触发 -> self-hosted runner（你国内常开机器）-> 采集 -> PushPlus 推送
+# 不依赖 CloudBase，不消耗其资源。
+on:
+  schedule:
+    - cron: '*/10 * * * *'     # 每 10 分钟（UTC 时间）；GitHub 调度可能延迟数分钟，属正常
+  workflow_dispatch: {}        # 允许在 Actions 页面手动触发
+
+jobs:
+  monitor:
+    # 必须用 self-hosted runner：淘宝/饿了么数据依赖中国大陆 IP，GitHub 托管 runner 在海外会被风控/定位失败。
+    # 在你的国内常开机器（Win/Linux 均可）注册 self-hosted runner 后，本 job 会自动在该机执行。
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash
+    env:
+      STATE_DIR: ${{ runner.tool_cache }}/taobao-monitor-state
+      STATE_PATH: ${{ runner.tool_cache }}/taobao-monitor-state/browser-state.json
+      BROWSER_STATE_B64: ${{ secrets.BROWSER_STATE_B64 }}
+      PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+      NODE_ENV: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 还原登录态 (browser-state.json)
+        run: |
+          mkdir -p "$STATE_DIR"
+          echo "$BROWSER_STATE_B64" | base64 -d > "$STATE_PATH"
+          echo "browser-state.json bytes: $(wc -c < "$STATE_PATH")"
+
+      - name: 安装依赖
+        run: npm install
+
+      - name: 安装 Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: 采集并推送 (PushPlus)
+        run: node run-once.js

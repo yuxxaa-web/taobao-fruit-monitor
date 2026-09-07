@@ -64,7 +64,7 @@ function diff(prev, cur) {
   return { newShops, removedShops, priceUp, priceDown, newFruits, removedFruits };
 }
 
-async function collect() {
+async function collect(prevSnapArg) {
   if (!fs.existsSync(STATE_PATH)) {
     return { ok: false, reason: 'NO_STATE', message: '容器内缺少 browser-state.json（请通过 BROWSER_STATE_B64 注入或重新构建镜像）' };
   }
@@ -104,9 +104,10 @@ async function collect() {
 
   const cur = buildSnapshot(captures);
   const inRange = cur.filter(s => s.distance <= MAX_DIST);
-  const prev = prevSnap;
+  // 兼容常驻进程（内存 prevSnap）与单次运行（外部注入 prevSnapArg，如 GitHub Actions 无状态环境）
+  const prev = (prevSnapArg !== undefined) ? prevSnapArg : prevSnap;
   const d = diff(prev, cur);
-  prevSnap = cur; // 更新内存基线，供下次比价
+  prevSnap = cur; // 更新内存基线，供下次比价（常驻模式）
 
   const now = beijingNow();
   const entry = { time: now, total: cur.length, inRange: inRange.length, shops: cur };
