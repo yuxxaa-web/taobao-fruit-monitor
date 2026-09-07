@@ -1,0 +1,12 @@
+{
+  "name": "taobao-fruit-monitor",
+  "version": "1.2.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "playwright": "1.49.0",
+    "nodemailer": "^6.9.16"
+  }
+}
