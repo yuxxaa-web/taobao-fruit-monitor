@@ -32,23 +32,22 @@ copy "D:\yuxxa\Documents\WorkBuddy\2026-09-03-09-14-07\browser-state.json"  clou
 
 ## 2. 构建镜像并推送到 ACR（同地域 cn-hangzhou）
 
-1. 阿里云控制台开通 **容器镜像服务 ACR**（个人版即可），在 **cn-hangzhou** 建一个命名空间 + 仓库，例如：
-   - 命名空间：`tbmon`
+1. 阿里云控制台开通 **容器镜像服务 ACR**（个人版即可），在 **cn-hangzhou** 建一个命名空间 + 仓库。你截图里的实例已创建好：
    - 仓库：`taobao-fruit-monitor`
-   - 镜像地址：`registry.cn-hangzhou.aliyuncs.com/tbmon/taobao-fruit-monitor:latest`
+   - 实际镜像地址：`crpi-spcixhhbg4a49s3b5.cn-hangzhou.personal.cr.aliyuncs.com/taobao-fruit-monitor:latest`
 
 2. 本机登录 ACR 并构建推送（在 `cloud/` 目录下）：
 
 ```bash
-# 登录（密码在 ACR 控制台「访问凭证」设置）
-docker login --username=<你的阿里云账号> registry.cn-hangzhou.aliyuncs.com
+# 登录（密码在 ACR 控制台「访问凭证」设置；用户名用你截图里的「宇航2018」）
+docker login --username=宇航2018 crpi-spcixhhbg4a49s3b5.cn-hangzhou.personal.cr.aliyuncs.com
 
 # 构建（playwright 基础镜像较大，约几分钟）
 docker build -t taobao-fruit-monitor:latest .
 
-# 打标签并推送
-docker tag taobao-fruit-monitor:latest registry.cn-hangzhou.aliyuncs.com/tbmon/taobao-fruit-monitor:latest
-docker push registry.cn-hangzhou.aliyuncs.com/tbmon/taobao-fruit-monitor:latest
+# 打标签并推送（镜像地址以你 ACR 仓库「公网地址」为准）
+docker tag taobao-fruit-monitor:latest crpi-spcixhhbg4a49s3b5.cn-hangzhou.personal.cr.aliyuncs.com/taobao-fruit-monitor:latest
+docker push crpi-spcixhhbg4a49s3b5.cn-hangzhou.personal.cr.aliyuncs.com/taobao-fruit-monitor:latest
 ```
 
 ---
@@ -60,7 +59,7 @@ docker push registry.cn-hangzhou.aliyuncs.com/tbmon/taobao-fruit-monitor:latest
 s config add
 
 # 2) 设置环境变量（镜像地址 + PushPlus token）
-export IMAGE=registry.cn-hangzhou.aliyuncs.com/tbmon/taobao-fruit-monitor:latest
+export IMAGE=crpi-spcixhhbg4a49s3b5.cn-hangzhou.personal.cr.aliyuncs.com/taobao-fruit-monitor:latest
 export PUSHPLUS_TOKEN=你的pushplus_token
 
 # 3) 一键部署

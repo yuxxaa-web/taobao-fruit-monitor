@@ -3,7 +3,7 @@
 #   1) 安装 Serverless Devs：npm install -g @serverless-devs/s
 #   2) 配置密钥：s config add  （按提示填入阿里云 AccessKey ID/Secret，alias 填 default）
 #   3) 准备镜像：先把镜像推到同地域 ACR（见 DEPLOY-ALIYUN-FC.md），再把下方 IMAGE 改好
-#   4) 设置环境变量：export IMAGE=registry.cn-hangzhou.aliyuncs.com/<命名空间>/taobao-fruit-monitor:latest
+#   4) 设置环境变量：export IMAGE=crpi-spcixhhbg4a49s3b5.cn-hangzhou.personal.cr.aliyuncs.com/taobao-fruit-monitor:latest
 #                    export PUSHPLUS_TOKEN=你的token
 #   5) 部署：s deploy -y
 #
