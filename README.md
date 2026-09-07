@@ -136,24 +136,35 @@ curl http://localhost:8080/report.md
 淘宝/饿了么接口依赖**中国大陆 IP**（定位、登录态绑定、反爬风控）。GitHub 官方托管 runner 在海外，直接跑会抓不到正确数据。**self-hosted runner** = 在你的一台国内常开机器（Windows / Linux 均可，装 Node 20 + Git）上注册，Actions 触发后就在那台机器本地用 Chromium 抓数据，IP 正确、网络正常。
 
 ### 步骤
-1. **配置 Secrets**（仓库 → Settings → Secrets and variables → Actions → New repository secret）：
-   - `BROWSER_STATE_B64`：淘宝登录态 `browser-state.json` 的 base64（生成见下）；
-   - `PUSHPLUS_TOKEN`：PushPlus token（关注「PushPlus 推送加」公众号 → 登录 pushplus.plus → 复制 token）。
-2. **注册 self-hosted runner**（仓库 → Settings → Actions → Runners → New self-hosted runner）：
-   - 按页面指引下载 runner 并解压到你的国内机器；
+1. **添加 Secrets**（仓库 → Settings → Secrets and variables → Actions → New repository secret）：
+   - `PUSHPLUS_TOKEN`：PushPlus token（关注「PushPlus 推送加」公众号 → 登录 pushplus.plus → 复制 token）。**唯一必须的 Secret。**
+   - （可选）`BROWSER_STATE_B64`：仅当你坚持用 Secret 注入登录态时填；注意 GitHub Secret 上限 **64KB**，而登录态文件约 **191KB**，base64 后超限会失败——所以强烈推荐下面的「文件方式」。
+2. **把登录态文件放到 runner 本机**（推荐，绕开 64KB 限制）：
+   - 在跑 runner 的那台机器上，新建目录并把 `browser-state.json` 放进去：
+     - Windows：`C:\Users\<你的用户名>\tbmon-state\browser-state.json`
+     - Linux / macOS：`~/tbmon-state/browser-state.json`
+   - 这就是采集要用的淘宝登录态（含 Cookie），**只存在你本机**，不上传、不入 git；更新登录态时直接覆盖这个文件即可（不必改 Secret）。
+3. **注册 self-hosted runner**（仓库 → Settings → Actions → Runners → New self-hosted runner）：
+   - 按页面指引下载 runner 并解压到你的国内常开机器；
    - 运行 `./config.sh --url https://github.com/yuxxaa-web/taobao-fruit-monitor --token <页面给的 TOKEN>`；
-   - 运行 `./run.sh` 常驻（可注册为系统服务以便开机自启）；
-   - 确保该机器已装 **Node.js 20** 与 **Git**。
-3. **触发**：`git push` 到 main，或在 Actions 页面手动 Run workflow。之后每 10 分钟自动跑一次。
-
-### 登录态 base64 生成
-- Windows (PowerShell)：`[Convert]::ToBase64String([IO.File]::ReadAllBytes("browser-state.json"))`
-- macOS / Linux：`base64 -i browser-state.json`
+   - 运行 `./run.sh` 常驻（可 `./svc.sh install` 注册为系统服务以便开机自启）；
+   - 确保该机器已装 **Node.js 20** 与 **Git**（含 Git Bash）。
+4. **首次拉起 / 本地验证**：在 runner 机器上
+   ```bash
+   git clone https://github.com/yuxxaa-web/taobao-fruit-monitor.git
+   cd taobao-fruit-monitor
+   npm install
+   npx playwright install chromium
+   export PUSHPLUS_TOKEN=你的token
+   node run-once.js
+   ```
+   微信收到首封推送即说明通道打通（首次采集会建基线，下轮开始对比涨跌）。
+5. **触发自动调度**：Actions 页面手动 Run workflow，或 `git push` 一次；之后每 10 分钟自动跑。
 
 ### 注意事项
 - 调度频率：`cron: '*/10 * * * *'`（UTC）。GitHub 对 scheduled workflow 可能延迟几分钟，属正常。
-- 状态持久化：上一轮快照与去重标记存在 runner 的 `runner.tool_cache/taobao-monitor-state`，**同机器跨 run 保留**；所以价格涨跌对比、半小時汇总去重都能正确工作（这也是为什么不能用每次全新 VM 的托管 runner）。
-- 登录态过期：淘宝登录态通常几天~数周失效。失效后 PushPlus 推送「【TBSG-JK】YDDTSX，需重新登录」，重新生成 `BROWSER_STATE_B64` 并更新 Secret 即可。
+- **登录态存放位置**：`$HOME/tbmon-state/`（Windows 即 `C:\Users\<你>\tbmon-state\`）。该目录在 runner 本机、不受 Actions 清理影响；上一轮快照（`prev-snap.json`）与去重标记（`notify-state.json`）也存这里，**同机器跨 run 保留**，价格涨跌对比与半小時汇总去重才能正确工作（这也是为什么不能用每次全新 VM 的托管 runner）。
+- 登录态过期：淘宝登录态通常几天~数周失效。失效后 PushPlus 推送「【TBSG-JK】YDDTSX，需重新登录」，重新导出 `browser-state.json` 覆盖本机文件即可。
 - PushPlus 免费版有每日条数上限，频繁价格变动可能触顶；必要时降低推送频率或升级 PushPlus 付费档。
 
 ---
