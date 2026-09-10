@@ -46,23 +46,30 @@ tools/                # 调试/逆向辅助（协议签名验证等，无密钥�
 
 ## 使用流程
 
-1. **首次 / 令牌过期时重登**（本机，需 system Python 3.12 + Playwright）：
+> 仓库脚本均位于**仓库根目录**（无 `cloud/` 子目录）。以下命令请在仓库根目录执行。
+
+1. **安装依赖**：
    ```powershell
-   cd cloud
-   C:\Users\yuxxa\AppData\Local\Programs\Python\Python312\python.exe refresh_session.py
-   $env:AK_ID="..."; $env:AK_SECRET="..."; $env:PUSHPLUS_TOKEN="..."
-   C:\Users\yuxxa\AppData\Local\Programs\Python\Python312\python.exe upload_state.py
+   pip install -r requirements.txt
+   # 若使用本机重登，还需下载浏览器：
+   playwright install chromium
    ```
-2. **部署 / 更新**（本机）：
+2. **首次 / 令牌过期时重登**（本机，需 Playwright + 浏览器）：
+   ```powershell
+   $env:AK_ID="..."; $env:AK_SECRET="..."; $env:PUSHPLUS_TOKEN="..."
+   python refresh_session.py
+   python upload_state.py
+   ```
+3. **部署 / 更新**：
    ```powershell
    $env:AK_ID="..."; $env:AK_SECRET="..."
    python deploy_free.py
    ```
-3. **强制冷启动拉新登录态**（令牌已上传但想立即生效）：
+4. **强制冷启动拉新登录态**（令牌已上传但想立即生效）：
    ```powershell
    python force_cold_free.py
    ```
-4. **手动验证一次**：`python invoke_fc.py`
+5. **手动验证一次**：`python invoke_fc.py`
 
 ## 安全注意事项
 

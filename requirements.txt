@@ -1,0 +1,11 @@
+# 阿里云函数计算 SDK（部署 / 更新 / 强制冷启动 / 手动触发）
+alibabacloud_fc_open20210406>=2.7.0
+alibabacloud_tea_openapi>=2.0.0
+alibabacloud_tea_util>=0.3.0
+# 账单查询（check_bill.py）
+alibabacloud_bssopenapi20171214>=2.0.0
+# OSS 登录态上传 / 内网签名 URL 生成（upload_state.py）
+oss2>=2.18.0
+# 本机重登、生成 browser-state.json（refresh_session.py / tools/capture_request.py）
+# 注意：playwright 装完后还需执行 `playwright install chromium` 下载浏览器
+playwright>=1.40.0
