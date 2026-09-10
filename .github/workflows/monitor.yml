@@ -1,0 +1,50 @@
+name: monitor
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # 每 10 分钟（GitHub 最短 5 分钟）
+  workflow_dispatch:         # 允许手动触发
+
+permissions:
+  actions: write            # 上传/下载 snap 产物
+  contents: write           # 读写 login-state release 资产（持久化刷新后的 token）
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+      STATE_DIR: ${{ github.workspace }}/state_dl
+      STATE_PATH: ${{ github.workspace }}/state_dl/browser-state.json
+      GITHUB_ACTIONS: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download state (snapshot + login)
+        run: python github_runtime/fetch_state.py state_dl
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Collect & push (PushPlus)
+        run: node github_runtime/run.js
+
+      - name: Persist refreshed login state to release
+        if: always()
+        run: gh release upload login-state --clobber state_dl/browser-state.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Upload snapshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snap
+          path: state_dl
+          retention-days: 90
+          overwrite: true
+          if-no-files-found: warn

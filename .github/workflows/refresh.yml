@@ -1,0 +1,58 @@
+name: refresh-login
+
+on:
+  workflow_dispatch:        # 手动触发（令牌过期且本机不便时尝试）
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      STATE_DIR: ${{ github.workspace }}/state_dl
+      STATE_PATH: ${{ github.workspace }}/state_dl/browser-state.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install playwright
+      - run: playwright install chromium
+
+      - name: Download current snapshot
+        run: python github_runtime/fetch_state.py state_dl || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Refresh login (headless)
+        # 注意：若 Ele.me 强制扫码/验证码，headless 无法完成，需在本机重登后用 upload_state_github.py 上传
+        run: python refresh_session.py
+
+      - name: Stage refreshed login
+        run: cp browser-state.json state_dl/ || true
+
+      - name: Ensure login-state release
+        run: gh release view login-state >/dev/null 2>&1 || gh release create login-state --title "login-state (auto-managed)" --notes "managed" --latest=false
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Upload refreshed login state
+        if: always()
+        run: gh release upload login-state --clobber state_dl/browser-state.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Upload snapshot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snap
+          path: state_dl
+          retention-days: 90
+          overwrite: true
+          if-no-files-found: warn
