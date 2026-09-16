@@ -504,6 +504,7 @@ def main():
         out["pushSent"] = notify(r, st)
         out["pushplus"] = bool(PUSHPLUS_TOKEN)
         save_json("notify-state.json", st)
+        save_json("last-run.json", out)  # 无窗口运行（pythonw）后也能查最近一次结果
         print(json.dumps(out, ensure_ascii=False))
     finally:
         try:
