@@ -13,7 +13,7 @@
   7. 回写最新 storage_state（cookie 保活，正常情况下登录态可长期续命）
 依赖：system Python 3.12 + playwright（chromium-1223 已装）
 """
-import json, os, sys, time, urllib.request
+import json, os, re, sys, time, urllib.request
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.abspath(os.path.join(BASE, "..", "local-state"))
@@ -57,11 +57,28 @@ def save_json(name, obj):
     except Exception as e:
         print("[save]", name, e)
 
+def to_txt(md, limit=650):
+    """markdown 转纯文本（微信客服文本消息上限约 2048 字节≈650 汉字）"""
+    lines = []
+    for ln in md.splitlines():
+        ln = ln.replace("**", "").replace("`", "")
+        ln = re.sub(r"^#+\s*", "", ln)
+        ln = re.sub(r"^\s*-\s+", "· ", ln)
+        if ln.strip():
+            lines.append(ln.rstrip())
+    txt = "\n".join(lines)
+    if len(txt) > limit:
+        txt = txt[:limit] + "\n…(内容过长已截断)"
+    return txt
+
 def pushplus(title, content):
     if not PUSHPLUS_TOKEN:
         return False
     try:
-        data = json.dumps({"token": PUSHPLUS_TOKEN, "title": title, "content": content, "template": "markdown"}).encode()
+        # 2026-09-16：改用 txt 纯文本模板，内容直接显示在微信会话里，
+        # 不再跳 H5 网页（此前 markdown 模板点开常"跳转失败"）
+        data = json.dumps({"token": PUSHPLUS_TOKEN, "title": title,
+                           "content": to_txt(content), "template": "txt"}).encode()
         req = urllib.request.Request("https://www.pushplus.plus/send", data=data,
                                      headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=15) as r:
@@ -183,14 +200,14 @@ def collect_shop_detail(page, surl):
     page.on("response", on_detail)
     try:
         page.goto(surl, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(8000)
+        page.wait_for_timeout(10000)
         prev_n, stall = -1, 0
-        for _ in range(20):
+        for _ in range(24):
             page.mouse.wheel(0, 2500)
-            page.wait_for_timeout(1800)
+            page.wait_for_timeout(2500)
             if len(detail_bodies) == prev_n:
                 stall += 1
-                if stall >= 3:
+                if stall >= 4:
                     break
             else:
                 stall = 0
@@ -456,6 +473,14 @@ def collect_once():
         prev_detail = load_json("prev-detail.json", {})
         for key, curd in detail_out.items():
             pv = (prev_detail.get(key) or {}).get("items") or {}
+            # 加载不全守卫：本轮商品数明显少于上轮（滚动中断等）→ 跳过比对且不覆盖基线，
+            # 否则会把没加载出来的商品误报成"下架"（2026-09-16 实测 83→62 误报 22 个下架）
+            if pv and len(curd["items"]) < len(pv) * 0.75:
+                print("[detail] %s 本轮 %d/%d 疑似加载不全，跳过比对" % (key, len(curd["items"]), len(pv)))
+                detail[key] = {"name": curd["name"], "count": len(curd["items"]),
+                               "items": curd["items"], "diff": {"up": [], "down": [], "new": [], "removed": []},
+                               "first": False, "now": now, "short": True}
+                continue
             dd = diff_items(pv, curd["items"])
             detail[key] = {"name": curd["name"], "count": len(curd["items"]),
                            "items": curd["items"], "diff": dd, "first": not pv,
@@ -468,6 +493,9 @@ def collect_once():
             det = detail.get(key)
             if not det:
                 md += "- %s：本轮未采集到\n" % key
+                continue
+            if det.get("short"):
+                md += "- **%s**：本轮抓取不全（%d 个），未比对\n" % (det["name"], det["count"])
                 continue
             dd = det["diff"]
             chg = len(dd["up"]) + len(dd["down"]) + len(dd["new"]) + len(dd["removed"])
