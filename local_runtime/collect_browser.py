@@ -1,6 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-本机浏览器采集器（最终方案）：Windows 计划任务每 10 分钟调起。
+本机浏览器采集器（最终方案）：Windows 计划任务白天 08:00-22:00 每 30 分钟调起。
+
+2026-09-20 降风控改造（用户账号曾被风控一天）：
+  - 只保留本机浏览器引擎（华为云裸协议定时器已删，GitHub Actions 已废弃）
+  - 计划任务仍每 10 分钟触发，但脚本自限流：实际采集至少间隔 28 分钟（≈每 30 分钟一轮）
+  - 启动随机延迟 15-90 秒（打散整点节奏，避免机械的固定间隔）
+  - 夜间 22:00-07:59 脚本内直接退出（正常人不会半夜刷外卖）
+  - 关键词每轮随机排序、页面停留/进店间隔全部随机化
+  - 汇总推送从 29 分钟改为 2 小时一次
 
 流程：
   1. 启动 Chromium（默认 headless，参数 --headful 可切换有头）
@@ -9,20 +17,23 @@
   4. 解析价格快照 → 与 prev-snap.json 比对涨跌
   5. 重点店铺（DETAIL_KEYS）从搜索结果取 scheme 进店 → 滚动加载全量商品
      （拦截 mtop.venus.shopcategoryservice.getcategorydetail）→ 与 prev-detail.json 比对
-  6. PushPlus 推送（价格变动 / 29 分钟汇总 / 重点店铺商品变动 / 失败告警，全部去重）
+  6. PushPlus 推送（价格变动 / 2 小时汇总 / 重点店铺商品变动 / 失败告警，全部去重）
   7. 回写最新 storage_state（cookie 保活，正常情况下登录态可长期续命）
 依赖：system Python 3.12 + playwright（chromium-1223 已装）
 """
-import json, os, re, sys, time, urllib.request
+import json, os, random, re, sys, time, urllib.request
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.abspath(os.path.join(BASE, "..", "local-state"))
 STATE_PATH = os.path.join(STATE_DIR, "browser-state.json")
 LOCK = os.path.join(STATE_DIR, "run.lock")
+MARKER = os.path.join(STATE_DIR, "last-collect.json")  # 上次实际采集时间（脚本自限流用）
+MIN_GAP = 28 * 60  # 实际采集最小间隔：计划任务仍是每10分钟触发，由脚本自限到~30分钟节奏
+                   # （2026-09-20：旧任务为管理员权限创建无法改触发器，故在脚本内限流）
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN", "")
 KW_LIST = ["水果", "水果店"]
 MAX_DIST = 3000
-SUMMARY_INTERVAL = 29 * 60
+SUMMARY_INTERVAL = 2 * 3600  # 汇总推送间隔：2 小时（2026-09-20 降频后调整）
 # 重点店铺：店名含这些关键词的做进店全量商品监控（2026-09-16 用户指定）
 DETAIL_KEYS = ["忘本甄果", "半斗米"]
 # 兜底进店链接（搜索结果里不一定出现，store_id/ele_id 稳定不变；2026-09-16 实测提取）
@@ -203,8 +214,8 @@ def collect_shop_detail(page, surl):
         page.wait_for_timeout(10000)
         prev_n, stall = -1, 0
         for _ in range(24):
-            page.mouse.wheel(0, 2500)
-            page.wait_for_timeout(2500)
+            page.mouse.wheel(0, random.randint(2000, 3000))
+            page.wait_for_timeout(random.randint(2200, 3200))
             if len(detail_bodies) == prev_n:
                 stall += 1
                 if stall >= 4:
@@ -405,7 +416,12 @@ def collect_once():
 
         page.on("response", on_response)
 
-        for kw in KW_LIST:
+        # 关键词每轮随机排序（避免固定顺序的机械特征）
+        kws = KW_LIST[:]
+        random.shuffle(kws)
+        for i, kw in enumerate(kws):
+            if i > 0:
+                page.wait_for_timeout(random.randint(3000, 7000))  # 换词前随机停留
             url = "https://h5.ele.me/minisearch/result?keyword=" + urllib.request.quote(kw)
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -417,12 +433,18 @@ def collect_once():
                 page.wait_for_timeout(1000)
             if "登录" in (page.title() or ""):
                 login_needed = True
+            if login_needed:
+                break
 
         # ---------- 重点店铺进店采集（全量商品） ----------
         detail_out = {}
         if captured and not login_needed:
+            # 进店顺序每轮随机
+            keys = DETAIL_KEYS[:]
+            random.shuffle(keys)
             schemes = find_schemes(captured)
-            for key in DETAIL_KEYS:
+            first_visit = True
+            for key in keys:
                 if key in schemes:
                     nm, surl = schemes[key]
                 elif key in DETAIL_FALLBACK:
@@ -431,13 +453,15 @@ def collect_once():
                 else:
                     print("[detail] 搜索结果未找到且无兜底链接:", key)
                     continue
+                # 拟人停留：第一家前等 3-8 秒，之后每家间隔 8-20 秒
+                page.wait_for_timeout(random.randint(3000, 8000) if first_visit else random.randint(8000, 20000))
+                first_visit = False
                 print("[detail] 进店:", nm)
                 items = collect_shop_detail(page, surl)
                 if not items:
                     print("[detail] 未抓到商品:", nm)
                     continue
                 detail_out[key] = {"name": nm, "items": items}
-                page.wait_for_timeout(2000)
 
         # 回写 cookie（登录态保活核心：每次访问后浏览器会刷新 cookie 有效期）
         try:
@@ -512,11 +536,28 @@ def collect_once():
 
 def main():
     load_env()
-    # 简单防重叠锁：4.5 分钟内的锁直接退出（进店全量采集后单轮耗时变长）
+    # 夜间停跑（2026-09-20 降风控）：08:00 前与 22:00 后直接退出，不产生任何请求
+    hour = time.gmtime(time.time() + 8 * 3600).tm_hour
+    if hour < 8 or hour >= 22:
+        print("[night] 夜间时段（%d 点），本轮跳过" % hour)
+        return
+    # 启动随机延迟 15-90 秒：打散整点节奏（须配合计划任务 5 分钟时限，不能太长）
+    if "--no-jitter" not in sys.argv:
+        time.sleep(random.randint(15, 90))
+    # 脚本自限流：距上次实际采集不足 28 分钟直接退出（每次触发只空转，不开浏览器）
+    try:
+        last_ts = (load_json("last-collect.json", {}) or {}).get("ts", 0)
+    except Exception:
+        last_ts = 0
+    if time.time() - last_ts < MIN_GAP:
+        print("[throttle] 距上次采集 %.0f 分钟，本轮空转跳过" % ((time.time() - last_ts) / 60))
+        return
+    # 简单防重叠锁：4.5 分钟内的锁直接退出
     if os.path.exists(LOCK) and time.time() - os.path.getmtime(LOCK) < 270:
         print("[lock] 上一次还在跑，跳过")
         return
     open(LOCK, "w").write(str(time.time()))
+    save_json("last-collect.json", {"ts": time.time()})
     try:
         st = load_json("notify-state.json", {"lastSummaryTs": 0, "lastPriceSig": None, "lastEmrgSig": None})
         r = collect_once()

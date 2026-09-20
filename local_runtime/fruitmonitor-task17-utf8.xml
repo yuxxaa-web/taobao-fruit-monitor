@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>水果价格监控：白天08:00-22:00每30分钟浏览器采集+推送（杭州花屿观澜里3km），pythonw 无窗口运行，2026-09-20 降风控降频改造</Description>
+  </RegistrationInfo>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <!-- 抖动最长5分钟 + 单轮采集约5分钟，放宽到15分钟 -->
+    <ExecutionTimeLimit>PT15M</ExecutionTimeLimit>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2026-09-20T08:00:00</StartBoundary>
+      <Repetition>
+        <Interval>PT30M</Interval>
+        <Duration>PT14H</Duration>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+      <Enabled>true</Enabled>
+    </CalendarTrigger>
+  </Triggers>
+  <Actions Context="Author">
+    <Exec>
+      <Command>C:\Users\yuxxa\AppData\Local\Programs\Python\Python312\pythonw.exe</Command>
+      <Arguments>D:\yuxxa\Documents\WorkBuddy\2026-09-03-09-14-07\github-src\local_runtime\collect_browser.py</Arguments>
+    </Exec>
+  </Actions>
+</Task>
