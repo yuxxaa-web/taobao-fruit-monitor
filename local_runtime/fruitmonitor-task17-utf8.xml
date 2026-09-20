@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>水果价格监控：白天08:00-22:00每30分钟浏览器采集+推送（杭州花屿观澜里3km），pythonw 无窗口运行，2026-09-20 降风控降频改造</Description>
+    <Description>水果价格监控：全天每30分钟触发（实际节奏由脚本自限流：白天~30分钟夜间~1小时+随机抖动；杭州花屿观澜里3km），pythonw 无窗口运行，2026-09-20 降风控改造</Description>
   </RegistrationInfo>
   <Principals>
     <Principal id="Author">
@@ -19,18 +19,14 @@
     <Enabled>true</Enabled>
   </Settings>
   <Triggers>
-    <CalendarTrigger>
+    <TimeTrigger>
       <StartBoundary>2026-09-20T08:00:00</StartBoundary>
       <Repetition>
         <Interval>PT30M</Interval>
-        <Duration>PT14H</Duration>
         <StopAtDurationEnd>false</StopAtDurationEnd>
       </Repetition>
-      <ScheduleByDay>
-        <DaysInterval>1</DaysInterval>
-      </ScheduleByDay>
       <Enabled>true</Enabled>
-    </CalendarTrigger>
+    </TimeTrigger>
   </Triggers>
   <Actions Context="Author">
     <Exec>

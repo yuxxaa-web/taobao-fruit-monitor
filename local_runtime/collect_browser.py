@@ -4,11 +4,11 @@
 
 2026-09-20 降风控改造（用户账号曾被风控一天）：
   - 只保留本机浏览器引擎（华为云裸协议定时器已删，GitHub Actions 已废弃）
-  - 计划任务仍每 10 分钟触发，但脚本自限流：实际采集至少间隔 28 分钟（≈每 30 分钟一轮）
-  - 启动随机延迟 15-90 秒（打散整点节奏，避免机械的固定间隔）
-  - 夜间 22:00-07:59 脚本内直接退出（正常人不会半夜刷外卖）
-  - 关键词每轮随机排序、页面停留/进店间隔全部随机化
-  - 汇总推送从 29 分钟改为 2 小时一次
+  - 计划任务仍每 10 分钟触发，但脚本自限流：白天随机 26-34 分钟一轮、夜间 58-72 分钟一轮
+    （用户 2026-09-20 要求：本机不关机则夜间也跑，只是放慢节奏）
+  - 启动随机延迟 10-60 秒（打散整点节奏，避免机械的固定间隔）
+  - 关键词每轮随机排序、搜索结果偶尔滚动浏览、进店顺序随机、停留间隔全部随机化
+  - 汇总推送 2 小时一次
 
 流程：
   1. 启动 Chromium（默认 headless，参数 --headful 可切换有头）
@@ -27,9 +27,9 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.abspath(os.path.join(BASE, "..", "local-state"))
 STATE_PATH = os.path.join(STATE_DIR, "browser-state.json")
 LOCK = os.path.join(STATE_DIR, "run.lock")
-MARKER = os.path.join(STATE_DIR, "last-collect.json")  # 上次实际采集时间（脚本自限流用）
-MIN_GAP = 28 * 60  # 实际采集最小间隔：计划任务仍是每10分钟触发，由脚本自限到~30分钟节奏
-                   # （2026-09-20：旧任务为管理员权限创建无法改触发器，故在脚本内限流）
+MARKER = os.path.join(STATE_DIR, "last-collect.json")  # 上次实际采集时间+下次允许采集时间（脚本自限流）
+# 自限流（计划任务仍是每10分钟触发，由脚本控制实际节奏；2026-09-20）：
+# 白天随机 26-34 分钟一轮；夜间(22:00-07:59)放慢到随机 58-72 分钟一轮（本机不关机则7×24覆盖）
 PUSHPLUS_TOKEN = os.environ.get("PUSHPLUS_TOKEN", "")
 KW_LIST = ["水果", "水果店"]
 MAX_DIST = 3000
@@ -211,7 +211,7 @@ def collect_shop_detail(page, surl):
     page.on("response", on_detail)
     try:
         page.goto(surl, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(10000)
+        page.wait_for_timeout(random.randint(6000, 12000))  # 进店先像人一样看一下首屏
         prev_n, stall = -1, 0
         for _ in range(24):
             page.mouse.wheel(0, random.randint(2000, 3000))
@@ -427,7 +427,7 @@ def collect_once():
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
             except Exception as e:
                 print("[goto]", str(e)[:100])
-            # 最多等 22 秒拿数据；拿到就提前继续
+            # 最多等 22 秒拿到数据；拿到就提前继续
             deadline = time.time() + 22
             while time.time() < deadline and not captured:
                 page.wait_for_timeout(1000)
@@ -435,6 +435,11 @@ def collect_once():
                 login_needed = True
             if login_needed:
                 break
+            # 拟人：拿到结果后 50% 概率像真人一样滚动浏览一会儿搜索结果
+            if captured and random.random() < 0.5:
+                for _ in range(random.randint(1, 3)):
+                    page.mouse.wheel(0, random.randint(600, 1400))
+                    page.wait_for_timeout(random.randint(800, 2000))
 
         # ---------- 重点店铺进店采集（全量商品） ----------
         detail_out = {}
@@ -536,28 +541,24 @@ def collect_once():
 
 def main():
     load_env()
-    # 夜间停跑（2026-09-20 降风控）：08:00 前与 22:00 后直接退出，不产生任何请求
-    hour = time.gmtime(time.time() + 8 * 3600).tm_hour
-    if hour < 8 or hour >= 22:
-        print("[night] 夜间时段（%d 点），本轮跳过" % hour)
-        return
-    # 启动随机延迟 15-90 秒：打散整点节奏（须配合计划任务 5 分钟时限，不能太长）
+    # 启动随机延迟 10-60 秒：打散整点节奏（须配合计划任务 5 分钟时限）
     if "--no-jitter" not in sys.argv:
-        time.sleep(random.randint(15, 90))
-    # 脚本自限流：距上次实际采集不足 28 分钟直接退出（每次触发只空转，不开浏览器）
-    try:
-        last_ts = (load_json("last-collect.json", {}) or {}).get("ts", 0)
-    except Exception:
-        last_ts = 0
-    if time.time() - last_ts < MIN_GAP:
-        print("[throttle] 距上次采集 %.0f 分钟，本轮空转跳过" % ((time.time() - last_ts) / 60))
+        time.sleep(random.randint(10, 60))
+    # 脚本自限流：未到下次允许采集时间直接退出（每次触发只空转，不开浏览器）
+    st_last = load_json("last-collect.json", {}) or {}
+    nxt = st_last.get("next", 0)
+    if time.time() < nxt:
+        print("[throttle] 距下次采集还有 %.0f 分钟，本轮空转跳过" % ((nxt - time.time()) / 60))
         return
     # 简单防重叠锁：4.5 分钟内的锁直接退出
     if os.path.exists(LOCK) and time.time() - os.path.getmtime(LOCK) < 270:
         print("[lock] 上一次还在跑，跳过")
         return
     open(LOCK, "w").write(str(time.time()))
-    save_json("last-collect.json", {"ts": time.time()})
+    # 记录本轮时间并预约下一轮：白天 26-34 分钟随机、夜间 58-72 分钟随机
+    hour = time.gmtime(time.time() + 8 * 3600).tm_hour
+    gap = random.randint(58, 72) * 60 if (hour >= 22 or hour < 8) else random.randint(26, 34) * 60
+    save_json("last-collect.json", {"ts": time.time(), "next": time.time() + gap})
     try:
         st = load_json("notify-state.json", {"lastSummaryTs": 0, "lastPriceSig": None, "lastEmrgSig": None})
         r = collect_once()
